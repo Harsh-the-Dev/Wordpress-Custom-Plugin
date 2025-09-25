@@ -1,131 +1,67 @@
-<?php
-/*
-Plugin Name: Custom Contact Form
-Description: A simple contact form that stores user submissions in the database.
-Version: 1.1
-Author: Your Name
-*/
+#include <iostream>
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <string.h>
 
-// Shortcode to display the contact form
-function custom_contact_form() {
-    global $wpdb;
+int main() {
+    const char* port = "/dev/ttyUSB0";   // Change to your port (e.g., /dev/ttySCANNER_ENTER)
+    int fd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
 
-    // Initialize a variable to hold the thank-you message
-    $thank_you_message = '';
-
-    // Check if form is submitted and handle submission
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_contact_form'])) {
-        $name = sanitize_text_field($_POST['name']);
-        $email = sanitize_email($_POST['email']);
-        $phone = sanitize_text_field($_POST['phone']);
-        $message = sanitize_textarea_field($_POST['message']);
-
-        // Validate inputs
-        if (!empty($name) && !empty($email) && !empty($phone)) {
-            $table_name = $wpdb->prefix . 'contact_form_submissions';
-            $wpdb->show_errors();
-
-            $inserted = $wpdb->insert($table_name, array(
-                'name' => $name,
-                'email' => $email,
-                'phone' => $phone,
-                'message' => $message,
-            ));
-
-            if ($inserted) {
-                $thank_you_message = '<p class="thank-you">Thank you for your submission!</p>';
-            } else {
-                $thank_you_message = '<p class="error">Error inserting data: ' . esc_html($wpdb->last_error) . '</p>';
-            }
-        } else {
-            $thank_you_message = '<p class="error">Please fill in all required fields.</p>';
-        }
+    if (fd < 0) {
+        std::cerr << "Error opening serial port " << port << std::endl;
+        return 1;
     }
 
-    ob_start();
-    ?>
-    <div class="contact-form-container">
-        <form method="post">
-            <label for="name">Name:</label>
-            <input type="text" name="name" required>
+    // Configure port
+    struct termios tty;
+    memset(&tty, 0, sizeof tty);
 
-            <label for="email">Email:</label>
-            <input type="email" name="email" required>
+    if (tcgetattr(fd, &tty) != 0) {
+        std::cerr << "Error from tcgetattr" << std::endl;
+        return 1;
+    }
 
-            <label for="phone">Phone:</label>
-            <input type="tel" name="phone" required>
+    cfsetospeed(&tty, B9600); // Set baud rate to 9600
+    cfsetispeed(&tty, B9600);
 
-            <label for="message">Message (Optional):</label>
-            <textarea name="message"></textarea>
+    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
+    tty.c_iflag &= ~IGNBRK;                         // disable break processing
+    tty.c_lflag = 0;                                // no signaling chars, no echo
+    tty.c_oflag = 0;                                // no remapping, no delays
+    tty.c_cc[VMIN]  = 1;                            // read blocks until 1 char
+    tty.c_cc[VTIME] = 5;                            // 0.5 seconds read timeout
 
-            <input type="submit" name="submit_contact_form" value="Submit">
-        </form>
-        <?php echo $thank_you_message; ?>
-    </div>
-    <?php
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY);         // shut off xon/xoff ctrl
+    tty.c_cflag |= (CLOCAL | CREAD);                // enable receiver
+    tty.c_cflag &= ~(PARENB | PARODD);              // no parity
+    tty.c_cflag &= ~CSTOPB;                         // one stop bit
+    tty.c_cflag &= ~CRTSCTS;                        // no flow control
 
-    return ob_get_clean();
+    if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+        std::cerr << "Error from tcsetattr" << std::endl;
+        return 1;
+    }
+
+    // Write data
+    const char* msg = "Hello from Raspberry Pi!\\n";
+    int written = write(fd, msg, strlen(msg));
+    if (written < 0) {
+        std::cerr << "Error writing to serial port" << std::endl;
+    } else {
+        std::cout << "Wrote " << written << " bytes: " << msg << std::endl;
+    }
+
+    // Read data
+    char buf[100];
+    int n = read(fd, buf, sizeof(buf));
+    if (n > 0) {
+        buf[n] = '\\0'; // Null-terminate
+        std::cout << "Read: " << buf << std::endl;
+    } else {
+        std::cerr << "No data read" << std::endl;
+    }
+
+    close(fd);
+    return 0;
 }
-add_shortcode('custom_contact_form', 'custom_contact_form');
-
-// Create database table on plugin activation
-function custom_contact_form_install() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'contact_form_submissions';
-    $charset_collate = $wpdb->get_charset_collate();
-
-    $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        name tinytext NOT NULL,
-        email text NOT NULL,
-        phone text NOT NULL,
-        message text,
-        PRIMARY KEY (id)
-    ) $charset_collate;";
-
-    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-    dbDelta($sql);
-}
-register_activation_hook(_FILE_, 'custom_contact_form_install');
-
-// Enqueue styles for the contact form
-function custom_contact_form_styles() {
-    echo '
-    <style>
-        .contact-form-container {
-            max-width: 400px;
-            margin: auto;
-            padding: 20px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            background-color: #f9f9f9;
-        }
-        input[type="text"], input[type="email"], input[type="tel"], textarea {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-        }
-        input[type="submit"] {
-            background-color: #4CAF50;
-            color: white;
-            padding: 10px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        input[type="submit"]:hover {
-            background-color: #45a049;
-        }
-        .thank-you {
-            color: green;
-            font-weight: bold;
-        }
-        .error {
-            color: red;
-        }
-    </style>
-    ';
-}
-add_action('wp_head', 'custom_contact_form_styles');~
